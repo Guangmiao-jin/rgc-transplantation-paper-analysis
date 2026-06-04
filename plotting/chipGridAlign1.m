@@ -1,5 +1,118 @@
-function chipGridAlign1(imgPath, matPath,varargin)
-
+function chipGridAlign1(imgPath, matPath, varargin)
+% chipGridAlign1
+%
+% Aligns a 64 × 64 MEA chip grid to a large retinal TIFF image and updates
+% neuron distance information relative to a manually selected reference
+% centre, usually the optic nerve head.
+%
+% This version is intended for large TIFF images. It generates an 8-bit RGB
+% overlay image instead of a 16-bit RGB image, which helps reduce output file
+% size and improves writing speed for large images.
+%
+% INPUTS:
+%   imgPath : path to the large retinal TIFF image used for chip-grid
+%             alignment.
+%
+%             This should be the high-resolution TIFF image showing the
+%             retina/chip area, on which the user can manually identify the
+%             four corner channels of the MEA grid.
+%
+%             Example:
+%             imgPath = '/Users/xxx/retina_image_large.tif';
+%
+%   matPath : path to the corresponding *_distance.mat file containing
+%             analysisResults.neuronData.
+%
+%             Required fields inside analysisResults.neuronData:
+%               labels     - response classification for each neuron
+%                            1 = ON
+%                            2 = OFF
+%                            3 = ON-OFF
+%                            4 = unconventional
+%                            other values = unresponsive / other classes
+%
+%               centres    - 2 × N neuron centre coordinates in chip space,
+%                            assumed to be in µm
+%
+%               channelIDs - cluster/channel IDs used for labelling neurons
+%                            on the overlay image
+%
+%             Example:
+%             matPath = '/Users/xxx/recording_distance.mat';
+%
+% OPTIONAL PARAMETERS:
+%   'BinWidth'     : distance bin width in µm for calculating binned
+%                    responsiveness.
+%                    Default = 50
+%
+%   'SmoothWindow' : smoothing window size.
+%                    Default = 3
+%                    Note: this parameter is currently parsed but not used.
+%
+% OUTPUTS:
+%   1. An aligned TIFF image is saved:
+%          *_aligned.tif
+%
+%      This image contains the original TIFF converted to 8-bit RGB, with
+%      responsive clusters overlaid as coloured boxes and cluster IDs.
+%
+%      Colour code:
+%          red    = ON
+%          blue   = OFF
+%          green  = ON-OFF
+%          orange = unconventional
+%
+%   2. The input matPath file is updated with a new analysisResults structure:
+%          analysisResults.centre
+%          analysisResults.distances
+%          analysisResults.bin_edges
+%          analysisResults.bin_centers
+%          analysisResults.response_percentage
+%          analysisResults.bin_stats
+%          analysisResults.neuronData
+%          analysisResults.neuronVirtualCoords
+%
+%   3. channelCoords is exported to the MATLAB base workspace:
+%          channelCoords = [chip_x_index, chip_y_index, image_x, image_y]
+%
+% WORKFLOW:
+%   Step 1:
+%       Load the large TIFF image.
+%
+%   Step 2:
+%       The user manually selects four corner channels in this order:
+%           1. top-left
+%           2. top-right
+%           3. bottom-left
+%           4. bottom-right
+%
+%   Step 3:
+%       A 64 × 64 virtual MEA grid is reconstructed from the selected corner
+%       points and overlaid on the image for visual checking.
+%
+%   Step 4:
+%       Responsive clusters are mapped from chip coordinates to image
+%       coordinates and drawn on the image.
+%
+%   Step 5:
+%       The user manually selects a new reference centre, usually the optic
+%       nerve head.
+%
+%   Step 6:
+%       Distances from all neurons to the selected centre are recalculated.
+%
+%   Step 7:
+%       Neurons are grouped into distance bins, and the percentage of
+%       responsive neurons is calculated for each bin.
+%
+% NOTES:
+%   - The MEA grid is assumed to be 64 × 64.
+%   - The inter-channel spacing is assumed to be 60 µm.
+%   - The selected TIFF image should be large/high-resolution enough for
+%     accurate manual identification of the four chip corner channels.
+%   - The fourth selected corner is currently used mainly for visual
+%     confirmation; the grid calculation uses top-left, top-right, and
+%     bottom-left points.
 p = inputParser;
 addParameter(p, 'BinWidth', 50, @isnumeric); % 
 addParameter(p, 'SmoothWindow', 3, @isnumeric); % 
@@ -189,6 +302,23 @@ close(gcf);   % close all;
 end
 
 function [response_percentage, valid_bins, bin_stats] = calculate_binned_response(distances, isresponsive, bin_edges)
+% calculate_binned_response
+%
+% Calculates the percentage of responsive neurons in each distance bin.
+%
+% INPUTS:
+%   distances    : 1 × N vector of neuron distances from the selected centre
+%   isresponsive : 1 × N logical vector indicating whether each neuron is responsive
+%   bin_edges    : vector defining distance bin edges
+%
+% OUTPUTS:
+%   response_percentage : percentage of responsive neurons in each bin
+%   valid_bins          : logical vector indicating bins containing at least one neuron
+%   bin_stats           : structure containing:
+%                           total_count
+%                           responsive_count
+%                           mean_distance
+
     bin_stats = struct();
     response_percentage = zeros(1, length(bin_edges)-1);
     valid_bins = false(1, length(bin_edges)-1);
