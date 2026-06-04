@@ -1,128 +1,228 @@
-function ax = plotAllRasterPSTHs_On_Off_Response_example(plotMetrics)
+function plotAllRasterPSTHs_combined_Response_example_excel(psthMatFile, neuronIndex, outputExcelPath)
+% Usage:
+%   plotAndExportPSTH_example('path/to/file_psth.mat', 42, 'output.xlsx')
+%
+% Reads pltcurve from .mat, extracts neuron n, 
+% plots PSTH and exports raster + PSTH data to Excel.
 
-titleText = [{'Scotopic'}, {'Mesopic'}, {'Photopic'}];
+    % =====================================================
+    % 1. Read .mat and build plotMetrics
+    % =====================================================
+    data = load(psthMatFile);
+    pltcurve = data.pltcurve;
 
-figH = figure('units','normalized','outerposition',[0 0 1 1], 'Color','white', 'MenuBar','none');
-%% plot raster per trial
-nBlocks  = length(plotMetrics.trialSpikes);
-for stimblk = 1:nBlocks
-    if nBlocks == 1
-        ax(stimblk) = subplot(2,1,stimblk); hold on
-    else
-        ax(stimblk) = subplot(2,3,stimblk); hold on
+    plotMetrics.trialPSTHs = pltcurve.trialPSTHs{neuronIndex};
+    plotMetrics.binEdges   = pltcurve.PSTH_binEdges;
+
+    % Unwrap binEdges if needed
+    if isstruct(plotMetrics.binEdges)
+        fns = fieldnames(plotMetrics.binEdges);
+        plotMetrics.binEdges = plotMetrics.binEdges.(fns{1});
     end
-    trialSpikesCnd = plotMetrics.trialSpikes{stimblk};
-    xSpikePos = [];
-    ySpikePos = [];
-    % for each trial
-    for tr = 1:length(trialSpikesCnd)
-        trSpikes =trialSpikesCnd{tr};
+    if iscell(plotMetrics.binEdges)
+        plotMetrics.binEdges = plotMetrics.binEdges{1};
+    end
+    plotMetrics.binEdges = plotMetrics.binEdges(:)';
 
+    % =====================================================
+    % 2. Plot (your existing function)
+    % =====================================================
+    plotAllRasterPSTHs_combined_Response_example1(plotMetrics);
 
-        % build plottings
-        xSpikePosTemp = repmat(trSpikes',2,1);
-        xSpikePos = [xSpikePos xSpikePosTemp];
+    % =====================================================
+    % 3. Export to Excel
+    % =====================================================
+    binEdges = plotMetrics.binEdges(:)';
+    binCtrs  = (binEdges(1:end-1) + binEdges(2:end)) / 2;
+    binW     = median(diff(binEdges));
+    nBins    = numel(binCtrs);
 
-        ySpikePosTemp(1,:) = tr-1;                % Y-offset for raster plot
-        ySpikePosTemp(2,:) = tr;
-        ySpikePosTemp = repmat(ySpikePosTemp, 1, size(xSpikePosTemp,2));
+    condLabels = {'Scotopic', 'Mesopic', 'Photopic'};
+    nConds     = min(3, length(plotMetrics.trialPSTHs));
 
-        ySpikePos = [ySpikePos ySpikePosTemp];
+    % --- Sheet 1: PSTH summary (mean firing rate per condition) ---
+    T_psth = table();
+    T_psth.BinCenter_s = binCtrs(:);
 
-        % wipe variables for next trial
-        trSpikes = [];
-        ySpikePosTemp = [];
-        xSpikePosTemp = [];
-        % disp(['Len X: ' num2str(length(xSpikePos)) ' Len Y: ' num2str(length(ySpikePos))])
+    for k = 1:nConds
+        psthMat = plotMetrics.trialPSTHs{1, k};
+        meanFR  = mean(psthMat, 1, 'omitnan') / binW;
+        T_psth.(sprintf('%s_MeanFR', condLabels{k})) = meanFR(:);
     end
 
-    plot(xSpikePos, ySpikePos, 'Color', 'k');
+    writetable(T_psth, outputExcelPath, 'Sheet', 'PSTH_Summary');
 
-    % ---- light-on bar above raster ----
-    lightWindow = [-2 0];           % 
-    nTrials = length(trialSpikesCnd);
+    % --- Sheet 2: Metadata ---
+    T_meta = table();
+    T_meta.Field = {
+        'Source file'; 
+        'Neuron index'; 
+        'N conditions'; 
+        'N bins'; 
+        'Bin width (s)';
+        'Time range (s)';
+        'N trials (Scotopic)';
+        'N trials (Mesopic)';
+        'N trials (Photopic)'
+    };
 
-    barH   = 2;                  
-    gap    = 1;                  
-    y0     = nTrials + gap;        
+    nTrials_per_cond = cell(3, 1);
+    for k = 1:nConds
+        nTrials_per_cond{k} = num2str(size(plotMetrics.trialPSTHs{1,k}, 1));
+    end
+    for k = (nConds+1):3
+        nTrials_per_cond{k} = 'N/A';
+    end
 
-    currAx = ax(stimblk);
-    currAx.YLim = [0 nTrials + gap + barH + 0.2];
+    T_meta.Value = {
+        psthMatFile;
+        num2str(neuronIndex);
+        num2str(nConds);
+        num2str(nBins);
+        num2str(binW);
+        sprintf('%.2f to %.2f', binEdges(1), binEdges(end));
+        nTrials_per_cond{1};
+        nTrials_per_cond{2};
+        nTrials_per_cond{3}
+    };
 
-     patch(currAx, ...
+    writetable(T_meta, outputExcelPath, 'Sheet', 'Metadata');
+
+    fprintf('\nExcel exported to: %s\n', outputExcelPath);
+    fprintf('Sheets:\n');
+    fprintf('  1. PSTH_Summary  (bin centers + mean FR per condition)\n');
+    fprintf('  2. Metadata\n');
+end
+
+function plotAllRasterPSTHs_combined_Response_example1(plotMetrics)
+% Plot 3 conditions PSTH lines on ONE axes,
+% and add a separate bottom stimulus pattern axis using patch.
+% Input: plotMetrics only.
+% -------- settings --------
+condLabels = {'Scotopic','Mesopic','Photopic'};   % change if needed
+lightWindow = [-2 0];   % light ON
+darkWindow  = [0 2];    % light OFF
+YFIX = [-2 60];        %y-axis
+% smoothing (optional)
+smooth_ms = 10;        % set [] or 0 to disable
+% -------------------------
+nBlocks = length(plotMetrics.trialPSTHs);
+nShow   = min(3, nBlocks);
+binEdges = plotMetrics.binEdges(:)';
+binCtrs  = (binEdges(1:end-1) + binEdges(2:end)) / 2;
+binW     = median(diff(binEdges)); % seconds
+if isempty(binW) || binW <= 0
+    error('plotMetrics.binEdges invalid.');
+end
+% ---- compute rate traces ----
+rateAll = cell(1, nShow);
+% smoothing window in bins
+if ~isempty(smooth_ms) && smooth_ms > 0
+    winBins = max(3, round(smooth_ms / (binW*1000)));
+    if mod(winBins,2)==0, winBins = winBins+1; end
+else
+    winBins = 0;
+end
+for k = 1:nShow
+    psthMat = plotMetrics.trialPSTHs{1,k};     % [nTrials x nBins]
+    meanCountsPerBin = mean(psthMat, 1);
+    y = meanCountsPerBin / binW;             % spikes/s
+    % optional smoothing (gaussian)
+    if winBins > 0
+        if exist('smoothdata','file') == 2
+            y = smoothdata(y, 'gaussian', winBins);
+        else
+            % fallback gaussian conv
+            sigma = winBins/6;
+            xx = (-floor(winBins/2):floor(winBins/2));
+            g = exp(-(xx.^2)/(2*sigma^2)); g = g/sum(g);
+            y = conv(y, g, 'same');
+        end
+    end
+    rateAll{k} = y;
+end
+% ---- figure layout: main axis + bottom stim axis ----
+figure('Color','white','MenuBar','none',...
+    'Units','normalized','OuterPosition',[0.05 0.1 0.65 0.75]);
+left   = 0.12;
+width  = 0.82;
+bottom = 0.12;
+top    = 0.92;
+gap    = 0.03;
+hBar   = 0.08;
+hMain  = (top - bottom - hBar - gap);
+% Main axes (all 3 lines)
+axMain = axes('Position',[left, bottom + hBar + gap, width, hMain]); 
+hold(axMain,'on');
+% plot lines (same color black but different line styles to distinguish)
+lineStyles = {':','--','-'};  
+for k = 1:nShow
+    plot(axMain, binCtrs, rateAll{k}, 'k', 'LineWidth', 2, 'LineStyle', lineStyles{k});
+end
+xline(axMain, 0, 'Color',[0.45 0.45 0.45], 'LineWidth', 1.2);
+axMain.XLim = [lightWindow(1) darkWindow(2)];
+axMain.YLim = YFIX;
+hLen = 0.25;           % horizontal scale bar length (s)
+vLen = 5;            % vertical scale bar length (Hz) 
+xL = axMain.XLim;
+yL = axMain.YLim;
+% margins (fraction of range)
+mx = 0.06 * range(xL);
+my = 0.08 * range(yL);
+% anchor (bottom-left of the scale bar)
+x0 = xL(2) - mx - hLen;
+y0 = yL(2) - my - vLen;
+hold(axMain,'on');
+% vertical bar
+plot(axMain, [x0 x0], [y0 y0+vLen], 'k', 'LineWidth', 2);
+% horizontal bar
+plot(axMain, [x0 x0+hLen], [y0 y0], 'k', 'LineWidth', 2);
+% labels
+text(axMain, x0 + hLen/2, y0 - 0.02*range(yL), sprintf('%.2f s', hLen), ...
+    'HorizontalAlignment','center', 'VerticalAlignment','top', ...
+    'FontWeight','bold', 'Color','k');
+text(axMain, x0 - 0.02*range(xL), y0 + vLen/2, sprintf('%g Hz', vLen), ...
+    'HorizontalAlignment','right', 'VerticalAlignment','middle', ...
+    'FontWeight','bold', 'Color','k');
+axMain.Box = 'off';
+axMain.LineWidth = 1.2;
+axMain.TickDir = 'out';
+ylabel(axMain, 'Firing rate (spikes/s)');
+% legend
+legend(axMain, condLabels(1:nShow), 'Location','northeast', 'Box','off');
+% hide x tick labels on main axes (since stim bar has its own axis)
+axMain.XTickLabel = [];
+% Stimulus axis (bottom)
+axStim = axes('Position',[left, bottom, width, hBar]);
+hold(axStim,'on');
+axStim.XLim = [lightWindow(1) darkWindow(2)];
+axStim.YLim = [0 1];
+axStim.Box = 'off';
+axStim.LineWidth = 1.2;
+axStim.TickDir = 'out';
+axStim.YTick = [];
+% If you don't want any x-axis here either, hide it:
+% axStim.XTick = []; axStim.XColor = 'none'; xlabel(axStim,'');
+% If you want x-label only once, keep:
+xlabel(axStim,'Time (s)');
+% stimulus pattern: white then black
+y0 = 0.25; h = 0.5;
+patch(axStim, ...
     [lightWindow(1) lightWindow(2) lightWindow(2) lightWindow(1)], ...
-    [y0 y0 y0+barH y0+barH], ...
-    [1 0.9 0.1], 'EdgeColor','none', 'FaceAlpha',1, ...
-    'HandleVisibility','on');
-
-    text(mean(lightWindow), y0 + barH/2, 'light on', ...
-    'Parent', currAx, 'HorizontalAlignment','center', ...
+    [y0 y0 y0+h y0+h], ...
+    [1 0.9 0.1], 'EdgeColor','k', 'LineWidth', 1);
+text(mean(lightWindow), y0 + h/2, 'light on', ...
+    'Parent', axStim, 'HorizontalAlignment','center', ...
     'VerticalAlignment','middle', 'FontWeight','bold', 'Color','k');
-
-    darkWindow = [0 2];           % 
-
-     patch(currAx, ...
+patch(axStim, ...
     [darkWindow(1) darkWindow(2) darkWindow(2) darkWindow(1)], ...
-    [y0 y0 y0+barH y0+barH], ...
-    [0.5 0.5 0.5], 'EdgeColor','none', 'FaceAlpha',1, ...
-    'HandleVisibility','on');
-
-    text(mean(darkWindow), y0 + barH/2, 'light off', ...
-    'Parent', currAx, 'HorizontalAlignment','center', ...
+    [y0 y0 y0+h y0+h], ...
+    [0.5 0.5 0.5], 'EdgeColor','k', 'LineWidth', 1);
+text(mean(darkWindow), y0 + h/2, 'light off', ...
+    'Parent', axStim, 'HorizontalAlignment','center', ...
     'VerticalAlignment','middle', 'FontWeight','bold', 'Color','k');
-    set(currAx,'Box','on','LineWidth',1.2);
-
-
-    currAx = ax(stimblk);
-    currAx.XLim             = [-2 plotMetrics.binEdges(end)];
-    %currAx.YLim             = [0 length(trialSpikesCnd)];
-
-    currAx.XLabel.String  	= 'Time(s)';
-    currAx.YLabel.String  	= 'Trials';
-    xline(0, 'Color', 'r', 'LineWidth',2);
-    title(titleText{stimblk});
-
-
-
-    %% PSTH
-    if nBlocks == 1
-        ax(stimblk+1)   = subplot(2,1,stimblk+1);
-    else
-        ax(stimblk+3)   = subplot(2,3,stimblk+3);
-    end
-    binsize = 25; %ms
-    % nbins               = (range(responseMetrics.binEdges)*1000)/binsize;                        % Bin duration in [ms]
-    nobins              = 1000/binsize;                            % No of bins/sec
-
-    meanPSTH = mean(plotMetrics.trialPSTHs{stimblk});
-    countAverageSec     = (meanPSTH) * nobins;
-
-
-    h                   = histogram('BinCounts', countAverageSec, 'BinEdges', plotMetrics.binEdges);
-    h.FaceColor         = 'k';
-
-    hold on
-    xline(0, 'Color', 'r', 'LineWidth',2)
-
-    mVal                = max(h.Values)+round(max(h.Values)*.1);
-    if nBlocks == 1
-        currAx = ax(stimblk+1);
-    else
-        currAx = ax(stimblk+3);
-    end
-    currAx.XLim             = [-2 plotMetrics.binEdges(end)];
-
-    % fix for empty histogram
-    if mVal == 0
-        mVal = 1;
-    end
-
-    currAx.YLim             = [0 mVal];
-    currAx.XLabel.String  	= 'Time(s)';
-    currAx.YLabel.String  	= 'Average spikes per second';
-
-end
-if nBlocks ~= 1
-    subplotEvenAxes(ax, [0 1 0] , [4 5 6])
-end
+xline(axStim, 0, 'Color',[0.45 0.45 0.45], 'LineWidth', 1.2);
+% Link x axes so zoom/pan stays aligned
+linkaxes([axMain, axStim], 'x');
+ax = [axMain, axStim];
 end
