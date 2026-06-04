@@ -1,20 +1,78 @@
-function outTbl = plot_totalneurons_stacked_transplanted2(baseFolder)
-% baseFolder: root directory of rd10_transplanted
+function outTbl = plot_totalneurons_stacked_transplanted(baseFolder)
 %
-% Directory structure:
-% rd10_transplanted/
-% early degeneration/
-% NRL/behav pos or behav neg
-% CRX/behav pos or behav neg
-% SHAM/
-% late degeneration/
-% NRL/behav pos or behav neg
-% CRX/behav pos or behav neg
-% SHAM/
+% Summarises and plots the distribution of classified RGC response types
+% across transplanted and sham rd10 retinal MEA recordings.
 %
-% Output: outTbl (MATLAB table)
-% -----------------------------
-% Define 6  groups + 1 spacer to create a visual gap in the plot
+% This function recursively searches for *_totalneuronsV2.mat files under
+% each experimental subgroup, extracts the number of neurons classified as:
+%   - ON
+%   - OFF
+%   - ON-OFF
+%   - unconventional
+%   - non-responsive
+%
+% It then pools counts across recordings within each subgroup, calculates
+% within-group percentages, generates one stacked bar plot per degeneration
+% stage, and exports a summary table to Excel.
+%
+% INPUT:
+%   baseFolder : root directory of the rd10 transplantation analysis folder.
+%
+%                Expected folder structure:
+%
+%                baseFolder/
+%                    early degeneration/
+%                        NRL/
+%                            behavioural positive and ephys positive/
+%                            behavioural positive and ephys negative/
+%                            behavioural negative/
+%                        CRX/
+%                            behavioural positive and ephys positive/
+%                            behavioural positive and ephys negative/
+%                            behavioural negative/
+%                        SHAM/
+%
+%                    late degeneration/
+%                        NRL/
+%                            behavioural positive and ephys positive/
+%                            behavioural positive and ephys negative/
+%                            behavioural negative/
+%                        CRX/
+%                            behavioural positive and ephys positive/
+%                            behavioural positive and ephys negative/
+%                            behavioural negative/
+%                        SHAM/
+%
+% OUTPUT:
+%   outTbl : summary table containing, for each stage and group:
+%              - number of files analysed
+%              - total number of classified cells
+%              - raw counts of each response category
+%              - percentage of each response category
+%
+%   The function also saves:
+%       1. One stacked bar plot per stage:
+%              Neuron_types_early_degeneration.png
+%              Neuron_types_late_degeneration.png
+%
+%       2. One Excel summary table:
+%              summary_rd10_transplanted_early_late.xlsx
+%
+% RESPONSE CATEGORIES:
+%   OnNeurons      = ON transient + ON sustained
+%   OffNeurons     = OFF transient + OFF sustained
+%   OnOffNeurons   = ON-OFF responsive cells
+%   unconventional = non-canonical responsive cells
+%   notRespond     = non-responsive cells
+%
+% NOTE:
+%   Percentages are calculated within each subgroup:
+%
+%       category percentage =
+%           category count / total classified cells in that subgroup * 100
+%
+%   Spacer groups are used only to create visual gaps in the plot and are
+%   excluded from plotting/statistical interpretation.
 % -----------------------------
 stages = {'early degeneration', 'late degeneration'};
 behavPos1 = 'behavioural positive and ephys positive';
@@ -24,9 +82,9 @@ behavNeg = 'behavioural negative';
 mainCategories = {'OnNeurons', 'OffNeurons', 'OnOffNeurons', 'unconventional', 'notRespond'};
 
 % Desired plotting order: two NRL bars, gap, two CRX bars, gap, one SHAM bar
-plotGroupNames = {'NRL behav+ ephys+','NRL behav+ ephys+',....
+plotGroupNames = {'NRL behav+ ephys+','NRL behav+ ephys-',....
     'NRL behav-','Spacer1',...
-    'CRX behav+ ephys+','CRX behav+ ephys+',....
+    'CRX behav+ ephys+','CRX behav+ ephys-',....
     'CRX behav-','Spacer2','SHAM'};
 
 % Corresponding folders to scan under each stage
@@ -100,17 +158,55 @@ for s = 1:numel(stages)
             end
             matData1 = matData.totalneurons;
 
-            mainData = zeros(1, numel(mainCategories));
-            for k = 1:numel(mainCategories)
-                fieldName = ['num_' mainCategories{k}];
-                if isfield(matData1, fieldName)
-                    if isstruct(matData1.(fieldName)) && ismember(mainCategories{k}, {'OnNeurons','OffNeurons'})
-                        mainData(k) = mainData(k) + length(struct2array(matData1.(fieldName)));
-                    else
-                        mainData(k) = mainData(k) + length(matData1.(fieldName));
-                    end
-                end
+%% Extract response-category counts from this totalneuronsV2 file
+% ON and OFF categories are stored as structures containing transient and
+% sustained subtypes, so these are combined explicitly.
+%
+% Other categories are stored as vectors of neuron IDs.
+%
+% unique() is used for ON/OFF to avoid double-counting if any neuron appears
+% in both transient and sustained fields.
+
+mainData = zeros(1, numel(mainCategories));
+
+for k = 1:numel(mainCategories)
+
+    switch mainCategories{k}
+
+        case 'OnNeurons'
+            if isfield(matData1, 'num_OnNeurons')
+                ids = [
+                    matData1.num_OnNeurons.trans(:);
+                    matData1.num_OnNeurons.sus(:)
+                ];
+                mainData(k) = numel(unique(ids));
             end
+
+        case 'OffNeurons'
+            if isfield(matData1, 'num_OffNeurons')
+                ids = [
+                    matData1.num_OffNeurons.trans(:);
+                    matData1.num_OffNeurons.sus(:)
+                ];
+                mainData(k) = numel(unique(ids));
+            end
+
+        case 'OnOffNeurons'
+            if isfield(matData1, 'num_OnOffNeurons')
+                mainData(k) = numel(matData1.num_OnOffNeurons(:));
+            end
+
+        case 'unconventional'
+            if isfield(matData1, 'num_unconventional')
+                mainData(k) = numel(matData1.num_unconventional(:));
+            end
+
+        case 'notRespond'
+            if isfield(matData1, 'num_notRespond')
+                mainData(k) = numel(matData1.num_notRespond(:));
+            end
+    end
+end
 
             data(i).mainValues = data(i).mainValues + mainData;
             data(i).nFiles = data(i).nFiles + 1;
