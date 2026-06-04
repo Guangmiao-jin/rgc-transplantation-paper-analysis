@@ -363,8 +363,7 @@ function [response_percentage, valid_bins, bin_stats] = calculate_binned_respons
             % Current version:
             % responsive neurons in this bin divided by all classified neurons
             % across the full retina.
-            response_percentage(i) = ...
-                bin_stats(i).responsive_count / sum(all) * 100;
+           response_percentage(i) = bin_stats(i).responsive_count / bin_stats(i).total_count * 100;
 
             valid_bins(i) = true;
 
