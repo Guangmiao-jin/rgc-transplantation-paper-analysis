@@ -103,6 +103,7 @@ For transplantation analysis, organise files by degeneration stage, treatment gr
 
 Example structure:
 
+```
 rd10_transplanted/
 ├── early degeneration/
 │   ├── NRL/
@@ -125,6 +126,7 @@ rd10_transplanted/
     │   ├── behavioural positive and ephys negative/
     │   └── behavioural negative/
     └── SHAM/
+```
 ## Group-level plotting functions
 ### Cell-type composition across transplantation groups
 
@@ -205,7 +207,7 @@ PlotLatencyPerCondition(T1, outputFolder)
 
 This function generates boxplot and swarmplot figures for peak latency. The plotting structure mirrors `PlotDeltaRatePerCondition`, including per-condition, combined-condition, ON/OFF-specific and all-responsive-cell plots.
 
-> **Note:** The current plotting function uses `peakLatency` as the latency metric. If `onsetLatency` is required, the plotting variable should be modified accordingly.
+> **Note:** The current plotting function uses `peakLatency` as the latency metric.
 
 ## Relationship to the Baseline rd10 Pipeline
 
